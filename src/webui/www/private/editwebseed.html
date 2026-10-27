@@ -5,10 +5,8 @@
     <meta charset="UTF-8">
     <title>QBT_TR(Edit web seed)QBT_TR[CONTEXT=HttpServer]</title>
     <link rel="stylesheet" href="css/style.css?v=${CACHEID}" type="text/css">
-    <script src="scripts/lib/MooTools-Core-1.6.0-compat-compressed.js"></script>
-    <script src="scripts/lib/MooTools-More-1.6.0-compat-compressed.js"></script>
-    <script src="scripts/localpreferences.js?v=${CACHEID}"></script>
-    <script src="scripts/color-scheme.js?v=${CACHEID}"></script>
+    <script defer src="scripts/localpreferences.js?v=${CACHEID}"></script>
+    <script defer src="scripts/color-scheme.js?v=${CACHEID}"></script>
     <script>
         "use strict";
 
@@ -28,7 +26,7 @@
 
             const searchParams = new URLSearchParams(window.location.search);
             const origUrl = searchParams.get("url");
-            document.getElementById("url").value = decodeURIComponent(origUrl);
+            document.getElementById("url").value = origUrl;
             document.getElementById("url").focus();
 
             document.getElementById("editWebSeedButton").addEventListener("click", (e) => {
@@ -38,7 +36,7 @@
                         method: "POST",
                         body: new URLSearchParams({
                             hash: searchParams.get("hash"),
-                            origUrl: origUrl,
+                            origUrl: encodeURIComponent(origUrl),
                             newUrl: encodeURIComponent(document.getElementById("url").value.trim())
                         })
                     })

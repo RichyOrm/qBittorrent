@@ -1,7 +1,7 @@
 /*
  * Bittorrent Client using Qt and libtorrent.
- * Copyright (C) 2023  Vladimir Golovnev <glassez@yandex.ru>
- * Copyright (C) 2018  Mike Tzou (Chocobo1)
+ * Copyright (C) 2023-2025  Vladimir Golovnev <glassez@yandex.ru>
+ * Copyright (C) 2018-2026  Mike Tzou (Chocobo1)
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -31,19 +31,41 @@
 
 #include <QByteArray>
 #include <QByteArrayMatcher>
-#include <QByteArrayView>
 #include <QList>
 
-QList<QByteArrayView> Utils::ByteArray::splitToViews(const QByteArrayView in, const QByteArrayView sep)
+QList<QByteArrayView> Utils::ByteArray::splitToViews(const QByteArrayView in, const QByteArrayView sep, const Qt::SplitBehavior behavior)
 {
-    if (in.isEmpty())
-        return {};
-    if (sep.isEmpty())
-        return {in};
+    if (sep.isEmpty()) [[unlikely]]
+    {
+        QList<QByteArrayView> ret;
+
+        if (behavior == Qt::KeepEmptyParts)
+        {
+            ret.reserve(in.size() + 2);
+            ret.emplace_back();
+        }
+        else
+        {
+            ret.reserve(in.size());
+        }
+
+        for (auto iter = in.cbegin(); iter < in.cend(); ++iter)
+            ret.emplace_back(iter, 1);
+
+        if (behavior == Qt::KeepEmptyParts)
+            ret.emplace_back();
+
+        return ret;
+    }
+
+    if (in.isEmpty()) [[unlikely]]
+        return (behavior == Qt::SkipEmptyParts) ? QList<QByteArrayView> {} : QList<QByteArrayView> {{}};
 
     const QByteArrayMatcher matcher {sep};
     QList<QByteArrayView> ret;
-    ret.reserve(1 + (in.size() / (sep.size() + 1)));
+    ret.reserve((behavior == Qt::SkipEmptyParts)
+            ? (1 + (in.size() / (sep.size() + 1)))
+            : (1 + (in.size() / sep.size())));
     qsizetype head = 0;
     while (head < in.size())
     {
@@ -51,13 +73,15 @@ QList<QByteArrayView> Utils::ByteArray::splitToViews(const QByteArrayView in, co
         if (end < 0)
             end = in.size();
 
-        // omit empty parts
         const QByteArrayView part = in.sliced(head, (end - head));
-        if (!part.isEmpty())
+        if (!part.isEmpty() || (behavior == Qt::KeepEmptyParts))
             ret += part;
 
         head = end + sep.size();
     }
+
+    if ((behavior == Qt::KeepEmptyParts) && (head == in.size()))
+        ret.emplaceBack();
 
     return ret;
 }

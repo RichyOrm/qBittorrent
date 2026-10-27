@@ -82,6 +82,19 @@ inline QHash<QString, UIThemeColor> defaultUIThemeColors()
         {u"TransferList.MissingFiles"_s, {Color::Primer::Light::dangerFg, Color::Primer::Dark::dangerFg}},
         {u"TransferList.Error"_s, {Color::Primer::Light::dangerFg, Color::Primer::Dark::dangerFg}},
 
+        {u"PiecesBar.Border"_s, {{}, {}}},
+        {u"PiecesBar.Piece"_s, {{}, {}}},
+        {u"PiecesBar.PartialPiece"_s, {{}, {}}},
+        {u"PiecesBar.MissingPiece"_s, {{}, {}}},
+
+        {u"ProgressBar"_s, {{}, {}}}
+    };
+}
+
+// Palette isn't customizable in default theme
+inline QHash<QString, UIThemeColor> defaultPaletteColors()
+{
+    return {
         {u"Palette.Window"_s, {{}, {}}},
         {u"Palette.WindowText"_s, {{}, {}}},
         {u"Palette.Base"_s, {{}, {}}},
@@ -169,8 +182,7 @@ inline QSet<QString> defaultUIThemeIcons()
         u"preferences-desktop"_s,
         u"preferences-webui"_s,
         u"qbittorrent-tray"_s,
-        u"qbittorrent-tray-dark"_s,
-        u"qbittorrent-tray-light"_s,
+        u"qbittorrent-tray-mono"_s,
         u"queued"_s,
         u"ratio"_s,
         u"reannounce"_s,

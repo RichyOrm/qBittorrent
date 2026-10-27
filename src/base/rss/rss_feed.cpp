@@ -32,6 +32,7 @@
 #include "rss_feed.h"
 
 #include <algorithm>
+#include <ranges>
 #include <utility>
 #include <vector>
 
@@ -206,6 +207,8 @@ Article *Feed::articleByGUID(const QString &guid) const
 
 void Feed::handleMaxArticlesPerFeedChanged(const int n)
 {
+    Q_ASSERT(n >= 0);
+
     while (m_articlesByDate.size() > n)
         removeOldestArticle();
     // We don't need store articles here
@@ -355,6 +358,8 @@ bool Feed::addArticle(const QVariantHash &articleData)
 
 void Feed::removeOldestArticle()
 {
+    Q_ASSERT(!m_articlesByDate.isEmpty());
+
     auto *oldestArticle = m_articlesByDate.last();
     emit articleAboutToBeRemoved(oldestArticle);
 
@@ -426,20 +431,13 @@ int Feed::updateArticles(const QList<QVariantHash> &loadedArticles)
     std::vector<ArticleSortAdaptor> sortData;
     const QList<Article *> existingArticles = articles();
     sortData.reserve(existingArticles.size() + newArticles.size());
-    std::transform(existingArticles.begin(), existingArticles.end(), std::back_inserter(sortData)
-                   , [](const Article *article)
-    {
-        return std::make_pair(article->date(), nullptr);
-    });
-    std::transform(newArticles.begin(), newArticles.end(), std::back_inserter(sortData)
-                   , [](const QVariantHash &article)
-    {
-        return std::make_pair(article[Article::KeyDate].toDateTime(), &article);
-    });
+    for (const Article *article : existingArticles)
+        sortData.push_back(std::make_pair(article->date(), nullptr));
+    for (const QVariantHash &article : asConst(newArticles))
+        sortData.push_back(std::make_pair(article[Article::KeyDate].toDateTime(), &article));
 
     // Sort article list in reverse chronological order
-    std::sort(sortData.begin(), sortData.end()
-              , [](const ArticleSortAdaptor &a1, const ArticleSortAdaptor &a2)
+    std::ranges::sort(sortData, [](const ArticleSortAdaptor &a1, const ArticleSortAdaptor &a2)
     {
         return (a1.first > a2.first);
     });
@@ -448,14 +446,14 @@ int Feed::updateArticles(const QList<QVariantHash> &loadedArticles)
         sortData.resize(m_session->maxArticlesPerFeed());
 
     int newArticlesCount = 0;
-    std::for_each(sortData.crbegin(), sortData.crend(), [this, &newArticlesCount](const ArticleSortAdaptor &a)
+    for (const ArticleSortAdaptor &a : std::views::reverse(sortData))
     {
         if (a.second)
         {
             addArticle(*a.second);
             ++newArticlesCount;
         }
-    });
+    }
 
     return newArticlesCount;
 }
@@ -582,8 +580,8 @@ void Feed::cleanup()
 {
     m_dirty = false;
     m_savingTimer.stop();
-    Utils::Fs::removeFile(m_session->dataFileStorage()->storageDir() / m_dataFileName);
-    Utils::Fs::removeFile(m_iconPath);
+    std::ignore = Utils::Fs::removeFile(m_session->dataFileStorage()->storageDir() / m_dataFileName);
+    std::ignore = Utils::Fs::removeFile(m_iconPath);
 }
 
 void Feed::timerEvent([[maybe_unused]] QTimerEvent *event)

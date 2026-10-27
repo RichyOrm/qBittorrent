@@ -28,9 +28,11 @@
 
 #include "searchdownloadhandler.h"
 
+#include <QtLogging>
 #include <QProcess>
 
 #include "base/global.h"
+#include "base/logger.h"
 #include "base/path.h"
 #include "base/utils/foreignapps.h"
 #include "base/utils/fs.h"
@@ -38,6 +40,8 @@
 
 SearchDownloadHandler::SearchDownloadHandler(const QString &pluginName, const QString &url, SearchPluginManager *manager)
     : QObject(manager)
+    , m_pluginName {pluginName}
+    , m_url {url}
     , m_manager {manager}
     , m_downloadProcess {new QProcess(this)}
 {
@@ -45,23 +49,30 @@ SearchDownloadHandler::SearchDownloadHandler(const QString &pluginName, const QS
 #ifdef Q_OS_UNIX
     m_downloadProcess->setUnixProcessParameters(QProcess::UnixProcessFlag::CloseFileDescriptors);
 #endif
-    connect(m_downloadProcess, qOverload<int, QProcess::ExitStatus>(&QProcess::finished)
-            , this, &SearchDownloadHandler::downloadProcessFinished);
+    connect(m_downloadProcess, &QProcess::finished, this, &SearchDownloadHandler::downloadProcessFinished);
     const QStringList params
     {
         Utils::ForeignApps::PYTHON_ISOLATE_MODE_FLAG,
+        Utils::ForeignApps::PYTHON_UTF8_MODE_FLAG,
         (SearchPluginManager::engineLocation() / Path(u"nova2dl.py"_s)).toString(),
         pluginName,
         url
     };
     // Launch search
-    m_downloadProcess->start(Utils::ForeignApps::pythonInfo().executableName, params, QIODevice::ReadOnly);
+    m_downloadProcess->start(Utils::ForeignApps::pythonInfo().executablePath.data(), params, QIODevice::ReadOnly);
 }
 
-void SearchDownloadHandler::downloadProcessFinished(int exitcode)
+void SearchDownloadHandler::downloadProcessFinished(const int exitcode)
 {
-    QString path;
+    const auto errMsg = QString::fromUtf8(m_downloadProcess->readAllStandardError()).trimmed();
+    if (!errMsg.isEmpty())
+    {
+        qWarning("%s", qUtf8Printable(errMsg));
+        LogMsg(tr("Error occurred when downloading torrent via search engine. Engine: \"%1\". URL: \"%2\". Error: \"%3\".")
+            .arg(m_pluginName, m_url, errMsg), Log::WARNING);
+    }
 
+    QString path;
     if ((exitcode == 0) && (m_downloadProcess->exitStatus() == QProcess::NormalExit))
     {
         const QString line = QString::fromUtf8(m_downloadProcess->readAllStandardOutput()).trimmed();
@@ -70,5 +81,5 @@ void SearchDownloadHandler::downloadProcessFinished(int exitcode)
             path = parts[0].toString();
     }
 
-    emit downloadFinished(path);
+    emit downloadFinished(path, errMsg);
 }

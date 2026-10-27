@@ -1,6 +1,6 @@
 /*
  * Bittorrent Client using Qt and libtorrent.
- * Copyright (C) 2025  Mike Tzou (Chocobo1)
+ * Copyright (C) 2025-2026  Mike Tzou (Chocobo1)
  * Copyright (C) 2023  Vladimir Golovnev <glassez@yandex.ru>
  *
  * This program is free software; you can redistribute it and/or
@@ -28,6 +28,7 @@
  */
 
 #include <QByteArray>
+#include <QByteArrayView>
 #include <QLatin1StringView>
 #include <QObject>
 #include <QTest>
@@ -47,7 +48,7 @@ private slots:
     {
         using BAViews = QList<QByteArrayView>;
 
-        const auto check = [](const QByteArrayView in, const QByteArrayView sep, const BAViews expected)
+        const auto checkSkipEmptyParts = [](const QByteArrayView in, const QByteArrayView sep, const BAViews expected)
         {
             // verify it works
             QCOMPARE(Utils::ByteArray::splitToViews(in, sep), expected);
@@ -63,19 +64,53 @@ private slots:
             QCOMPARE(reference, expectedStrings);
         };
 
-        check({}, {}, {});
-        check({}, "/", {});
-        check("/", "/", {});
-        check("/a", "/", {"a"});
-        check("/a/", "/", {"a"});
-        check("/a/b", "/", (BAViews {"a", "b"}));
-        check("/a/b/", "/", (BAViews {"a", "b"}));
-        check("/a/b", "//", {"/a/b"});
-        check("//a/b", "//", {"a/b"});
-        check("//a//b", "//", (BAViews {"a", "b"}));
-        check("//a//b/", "//", (BAViews {"a", "b/"}));
-        check("//a//b//", "//", (BAViews {"a", "b"}));
-        check("///a//b//", "//", (BAViews {"/a", "b"}));
+        checkSkipEmptyParts({}, {}, {});
+        checkSkipEmptyParts({}, "/", {});
+        checkSkipEmptyParts("/", {}, {"/"});
+        checkSkipEmptyParts("/ab", {}, (BAViews {"/", "a", "b"}));
+        checkSkipEmptyParts("/", "/", {});
+        checkSkipEmptyParts("/a", "/", {"a"});
+        checkSkipEmptyParts("/a/", "/", {"a"});
+        checkSkipEmptyParts("/a/b", "/", (BAViews {"a", "b"}));
+        checkSkipEmptyParts("/a/b/", "/", (BAViews {"a", "b"}));
+        checkSkipEmptyParts("/a/b", "//", {"/a/b"});
+        checkSkipEmptyParts("//a/b", "//", {"a/b"});
+        checkSkipEmptyParts("//a//b", "//", (BAViews {"a", "b"}));
+        checkSkipEmptyParts("//a//b/", "//", (BAViews {"a", "b/"}));
+        checkSkipEmptyParts("//a//b//", "//", (BAViews {"a", "b"}));
+        checkSkipEmptyParts("///a//b//", "//", (BAViews {"/a", "b"}));
+
+        const auto checkKeepEmptyParts = [](const QByteArrayView in, const QByteArrayView sep, const BAViews expected)
+        {
+            // verify it works
+            QCOMPARE(Utils::ByteArray::splitToViews(in, sep, Qt::KeepEmptyParts), expected);
+
+            // verify it has the same behavior as `split(Qt::KeepEmptyParts)`
+            using Latin1Views = QList<QLatin1StringView>;
+
+            const Latin1Views reference = QLatin1StringView(in)
+                .tokenize(QLatin1StringView(sep), Qt::KeepEmptyParts).toContainer();
+            Latin1Views expectedStrings;
+            for (const auto &string : expected)
+                expectedStrings.append(QLatin1StringView(string));
+            QCOMPARE(reference, expectedStrings);
+        };
+
+        checkKeepEmptyParts({}, {}, {{}, {}});
+        checkKeepEmptyParts({}, "/", {{}});
+        checkKeepEmptyParts("/", {}, {"", "/", ""});
+        checkKeepEmptyParts("/ab", {}, (BAViews {"", "/", "a", "b", ""}));
+        checkKeepEmptyParts("/", "/", {"", ""});
+        checkKeepEmptyParts("/a", "/", {"", "a"});
+        checkKeepEmptyParts("/a/", "/", {"", "a", ""});
+        checkKeepEmptyParts("/a/b", "/", (BAViews {"", "a", "b"}));
+        checkKeepEmptyParts("/a/b/", "/", (BAViews {"", "a", "b", ""}));
+        checkKeepEmptyParts("/a/b", "//", {"/a/b"});
+        checkKeepEmptyParts("//a/b", "//", {"", "a/b"});
+        checkKeepEmptyParts("//a//b", "//", (BAViews {"", "a", "b"}));
+        checkKeepEmptyParts("//a//b/", "//", (BAViews {"", "a", "b/"}));
+        checkKeepEmptyParts("//a//b//", "//", (BAViews {"", "a", "b", ""}));
+        checkKeepEmptyParts("///a//b//", "//", (BAViews {"", "/a", "b", ""}));
     }
 
     void testAsQByteArray() const
@@ -92,6 +127,33 @@ private slots:
         QCOMPARE(Utils::ByteArray::toBase32("ABCDE"), "IFBEGRCF");
         QCOMPARE(Utils::ByteArray::toBase32("0000000000"), "GAYDAMBQGAYDAMBQ");
         QCOMPARE(Utils::ByteArray::toBase32("1"), "GE======");
+    }
+
+    void testUnquote() const
+    {
+        const auto test = []<typename T>()
+        {
+            QCOMPARE(Utils::ByteArray::unquote<T>({}), {});
+            QCOMPARE(Utils::ByteArray::unquote<T>("abc"), "abc");
+            QCOMPARE(Utils::ByteArray::unquote<T>("\"abc\""), "abc");
+            QCOMPARE(Utils::ByteArray::unquote<T>("\"a b c\""), "a b c");
+            QCOMPARE(Utils::ByteArray::unquote<T>("\"abc"), "\"abc");
+            QCOMPARE(Utils::ByteArray::unquote<T>("abc\""), "abc\"");
+            QCOMPARE(Utils::ByteArray::unquote<T>(" \"abc\" "), " \"abc\" ");
+            QCOMPARE(Utils::ByteArray::unquote<T>("\"a\"bc\""), "a\"bc");
+            QCOMPARE(Utils::ByteArray::unquote<T>("'abc'", "'"), "abc");
+            QCOMPARE(Utils::ByteArray::unquote<T>("'abc'", "\"'"), "abc");
+            QCOMPARE(Utils::ByteArray::unquote<T>("\"'abc'\"", "\"'"), "'abc'");
+            QCOMPARE(Utils::ByteArray::unquote<T>("\"'abc'\"", "'\""), "'abc'");
+            QCOMPARE(Utils::ByteArray::unquote<T>("\"'abc'\"", "'"), "\"'abc'\"");
+            QCOMPARE(Utils::ByteArray::unquote<T>("\"abc'", "'"), "\"abc'");
+            QCOMPARE(Utils::ByteArray::unquote<T>("'abc\"", "'"), "'abc\"");
+            QCOMPARE(Utils::ByteArray::unquote<T>("\"\""), "");
+            QCOMPARE(Utils::ByteArray::unquote<T>("\""), "\"");
+        };
+
+        test.template operator()<QByteArray>();
+        test.template operator()<QByteArrayView>();
     }
 };
 

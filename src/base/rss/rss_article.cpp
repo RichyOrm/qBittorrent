@@ -32,6 +32,7 @@
 
 #include <QVariant>
 
+#include "base/bittorrent/torrentdescriptor.h"
 #include "base/global.h"
 #include "rss_feed.h"
 
@@ -48,16 +49,16 @@ const QString Article::KeyIsRead = u"isRead"_s;
 
 Article::Article(Feed *feed, const QVariantHash &varHash)
     : QObject(feed)
-    , m_feed(feed)
-    , m_guid(varHash.value(KeyId).toString())
-    , m_date(varHash.value(KeyDate).toDateTime())
-    , m_title(varHash.value(KeyTitle).toString())
-    , m_author(varHash.value(KeyAuthor).toString())
-    , m_description(varHash.value(KeyDescription).toString())
-    , m_torrentURL(varHash.value(KeyTorrentURL).toString())
-    , m_link(varHash.value(KeyLink).toString())
-    , m_isRead(varHash.value(KeyIsRead, false).toBool())
-    , m_data(varHash)
+    , m_feed {feed}
+    , m_guid {varHash.value(KeyId).toString()}
+    , m_date {varHash.value(KeyDate).toDateTime()}
+    , m_title {varHash.value(KeyTitle).toString()}
+    , m_author {varHash.value(KeyAuthor).toString()}
+    , m_description {varHash.value(KeyDescription).toString()}
+    , m_torrentURL {varHash.value(KeyTorrentURL).toString()}
+    , m_link {varHash.value(KeyLink).toString()}
+    , m_isRead {varHash.value(KeyIsRead, false).toBool()}
+    , m_data {varHash}
 {
 }
 
@@ -119,6 +120,14 @@ void Article::markAsRead()
 bool Article::articleDateRecentThan(const Article *article, const QDateTime &date)
 {
     return article->date() > date;
+}
+
+bool Article::isSupportedTorrentURL(const QString &url)
+{
+    return url.startsWith(u"http:"_s, Qt::CaseInsensitive)
+            || url.startsWith(u"https:"_s, Qt::CaseInsensitive)
+            || url.startsWith(u"magnet:"_s, Qt::CaseInsensitive)
+            || BitTorrent::TorrentDescriptor::parse(url).has_value();
 }
 
 Feed *Article::feed() const

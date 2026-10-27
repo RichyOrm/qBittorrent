@@ -32,7 +32,7 @@
 
 #include <QtSystemDetection>
 
-#if defined(Q_OS_LINUX)
+#if defined(Q_OS_LINUX) && defined(QBT_USES_GETRANDOM)
 #include "randomlayer_linux.cpp"
 #elif defined(Q_OS_WIN)
 #include "randomlayer_win.cpp"
@@ -42,7 +42,7 @@
 
 uint32_t Utils::Random::rand(const uint32_t min, const uint32_t max)
 {
-    static RandomLayer layer;
+    static const RandomLayer layer;
 
     // new distribution is cheap: https://stackoverflow.com/a/19036349
     std::uniform_int_distribution<uint32_t> uniform(min, max);

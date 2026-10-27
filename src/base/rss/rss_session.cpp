@@ -31,6 +31,7 @@
 
 #include "rss_session.h"
 
+#include <algorithm>
 #include <chrono>
 
 #include <QDebug>
@@ -65,7 +66,7 @@ Session::Session()
     : m_storeProcessingEnabled(u"RSS/Session/EnableProcessing"_s)
     , m_storeRefreshInterval(u"RSS/Session/RefreshInterval"_s, 30)
     , m_storeFetchDelay(u"RSS/Session/FetchDelay"_s, 2)
-    , m_storeMaxArticlesPerFeed(u"RSS/Session/MaxArticlesPerFeed"_s, 50)
+    , m_storeMaxArticlesPerFeed(u"RSS/Session/MaxArticlesPerFeed"_s, 50, [](const int n) { return std::max(n, 0); })
     , m_workingThread(new QThread)
 {
     Q_ASSERT(!m_instance); // only one instance is allowed
@@ -74,7 +75,7 @@ Session::Session()
     m_confFileStorage = new AsyncFileStorage(specialFolderLocation(SpecialFolder::Config) / Path(CONF_FOLDER_NAME));
     m_confFileStorage->moveToThread(m_workingThread.get());
     connect(m_workingThread.get(), &QThread::finished, m_confFileStorage, &AsyncFileStorage::deleteLater);
-    connect(m_confFileStorage, &AsyncFileStorage::failed, [](const Path &fileName, const QString &errorString)
+    connect(m_confFileStorage, &AsyncFileStorage::failed, this, [](const Path &fileName, const QString &errorString)
     {
         LogMsg(tr("Couldn't save RSS session configuration. File: \"%1\". Error: \"%2\"")
                .arg(fileName.toString(), errorString), Log::WARNING);
@@ -83,7 +84,7 @@ Session::Session()
     m_dataFileStorage = new AsyncFileStorage(specialFolderLocation(SpecialFolder::Data) / Path(DATA_FOLDER_NAME));
     m_dataFileStorage->moveToThread(m_workingThread.get());
     connect(m_workingThread.get(), &QThread::finished, m_dataFileStorage, &AsyncFileStorage::deleteLater);
-    connect(m_dataFileStorage, &AsyncFileStorage::failed, [](const Path &fileName, const QString &errorString)
+    connect(m_dataFileStorage, &AsyncFileStorage::failed, this, [](const Path &fileName, const QString &errorString)
     {
         LogMsg(tr("Couldn't save RSS session data. File: \"%1\". Error: \"%2\"")
                .arg(fileName.toString(), errorString), Log::WARNING);
@@ -141,7 +142,7 @@ nonstd::expected<Folder *, QString> Session::addFolder(const QString &path)
 {
     const nonstd::expected<Folder *, QString> result = prepareItemDest(path);
     if (!result)
-        return result.get_unexpected();
+        return nonstd::make_unexpected(result.error());
 
     auto *destFolder = result.value();
     auto *folder = new Folder(path);
@@ -157,14 +158,14 @@ nonstd::expected<Feed *, QString> Session::addFeed(const QString &url, const QSt
 
     const nonstd::expected<Folder *, QString> result = prepareItemDest(path);
     if (!result)
-        return result.get_unexpected();
+        return nonstd::make_unexpected(result.error());
 
     auto *destFolder = result.value();
     auto *feed = new Feed(this, generateUID(), url, path, refreshInterval);
     addItem(feed, destFolder);
     store();
     if (isProcessingEnabled())
-        refreshFeed(feed, std::chrono::system_clock::now());
+        refresh();
 
     return feed;
 }
@@ -225,7 +226,7 @@ nonstd::expected<void, QString> Session::moveItem(Item *item, const QString &des
 
     const nonstd::expected<Folder *, QString> result = prepareItemDest(destPath);
     if (!result)
-        return result.get_unexpected();
+        return nonstd::make_unexpected(result.error());
 
     auto *destFolder = result.value();
     auto *srcFolder = static_cast<Folder *>(m_itemsByPath.value(Item::parentPath(item->path())));
@@ -405,12 +406,16 @@ void Session::loadLegacy()
         const QString feedUrl = Item::relativeName(legacyPath);
 
         for (const QString &folderPath : asConst(Item::expandPath(parentFolderPath)))
-            addFolder(folderPath);
+        {
+            if (const auto result = addFolder(folderPath); !result)
+                LogMsg(tr("Failed to add RSS folder item. Reason: \"%1\"").arg(result.error()), Log::WARNING);
+        }
 
         const QString feedPath = feedAliases[i].isEmpty()
                 ? legacyPath
                 : Item::joinPath(parentFolderPath, feedAliases[i]);
-        addFeed(feedUrl, feedPath);
+        if (const auto result = addFeed(feedUrl, feedPath); !result)
+            LogMsg(tr("Failed to add RSS feed item. Reason: \"%1\"").arg(result.error()), Log::WARNING);
         ++i;
     }
 }
@@ -463,7 +468,7 @@ void Session::addItem(Item *item, Folder *destFolder)
             if (feed->name() == oldURL)
             {
                 // If feed still use an URL as a name trying to rename it to match new URL...
-                moveItem(feed, Item::joinPath(Item::parentPath(feed->path()), feed->url()));
+                std::ignore = moveItem(feed, Item::joinPath(Item::parentPath(feed->path()), feed->url()));
             }
 
             emit feedURLChanged(feed, oldURL);
@@ -590,7 +595,7 @@ void Session::handleFeedTitleChanged(Feed *feed)
     {
         // Now we have something better than a URL.
         // Trying to rename feed...
-        moveItem(feed, Item::joinPath(Item::parentPath(feed->path()), feed->title()));
+        std::ignore = moveItem(feed, Item::joinPath(Item::parentPath(feed->path()), feed->title()));
     }
 }
 
@@ -610,15 +615,19 @@ int Session::maxArticlesPerFeed() const
 
 void Session::setMaxArticlesPerFeed(const int n)
 {
-    if (m_storeMaxArticlesPerFeed != n)
+    const int maxArticles = std::max(n, 0);
+    if (m_storeMaxArticlesPerFeed != maxArticles)
     {
-        m_storeMaxArticlesPerFeed = n;
-        emit maxArticlesPerFeedChanged(n);
+        m_storeMaxArticlesPerFeed = maxArticles;
+        emit maxArticlesPerFeedChanged(maxArticles);
     }
 }
 
 void Session::refresh()
 {
+    if (m_refreshTimepoints.isEmpty())
+        return;
+
     const auto currentTimepoint = std::chrono::system_clock::now();
     std::chrono::seconds nextRefreshInterval = 0s;
     for (auto it = m_refreshTimepoints.begin(); it != m_refreshTimepoints.end(); ++it)
@@ -626,7 +635,9 @@ void Session::refresh()
         Feed *feed = it.key();
         std::chrono::system_clock::time_point &timepoint = it.value();
 
-        if (timepoint <= currentTimepoint)
+        // Subtract 1 second from feed refresh timepoint to get more wiggle room and not end up with 0 "interval" below
+        // because currentTimepoint and timepoint have a difference of nanoseconds (~0 seconds)
+        if (currentTimepoint > (timepoint - 1s))
             timepoint = refreshFeed(feed, currentTimepoint);
 
         const auto interval = std::chrono::duration_cast<std::chrono::seconds>(timepoint - currentTimepoint);
